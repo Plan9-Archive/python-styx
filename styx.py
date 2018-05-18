@@ -47,63 +47,77 @@ class SocketReceiver:
 
 class StyxMessage:
 
-    @staticmethod
-    def parse(sock = None, data = None):
-    
-        if sock:
-            stream = SocketReceiver(sock)
-        elif raw_data:
-            stream = StringReceiver(data)
-        else:
-            raise StyxError("No valid data to parse.")
-        
-        # Read the message size (including the size itself), type and tag.
-        size = struct.unpack("<I", stream.recv(4))[0]
-        message_type = struct.unpack("<b", stream.recv(1))[0]
-        tag = struct.unpack("<H", stream.recv(2))[0]
-        
-        # Find the relevant message class to handle this type and create an
-        # instance of it to parse the message data.
-        Message = MessageTypes[message_type]
-        return Message().parse(tag, size, stream)
-    
     def decode_string(self, stream):
     
         length = struct.unpack("<H", stream.recv(2))[0]
-        return stream.recv(length)
+        return stream.recv(length).decode("utf8")
     
-    def init(self, tag, size):
+    def init(self, size, tag):
     
-        self.tag = tag
         self.size = size
+        self.tag = tag
     
     def encode_string(self, string):
     
-        return struct.pack("<H", len(string)) + string
+        utf8 = string.encode("utf8")
+        return struct.pack("<H", len(utf8)) + utf8
+    
+    def _parse_format(self, stream):
+    
+        self.fields = {
+            "size": repr(self.size),
+            "tag": repr(self.tag)
+            }
+        
+        for piece in self.format.split()[3:]:
+        
+            begin = piece.find("[")
+            
+            if begin != -1:
+            
+                name = piece[:begin]
+                end = piece.find("]", begin)
+                length = piece[begin + 1:end]
+                
+                if length == "s":
+                    # UTF-8 string
+                    value = self.decode_string(stream)
+                elif length == "n":
+                    # n bytes of raw data
+                    n = struct.unpack("<H", stream.recv(2))
+                    value = stream.recv(n)
+                elif length == "2":
+                    value = struct.unpack("<H", stream.recv(2))
+                elif length == "4":
+                    value = struct.unpack("<I", stream.recv(4))
+                else:
+                    raise
+                
+                self.fields[name] = repr(value)
+                self.__dict__[name] = value
+    
+    def parse(self, size, tag, stream):
+    
+        self.init(size, tag)
+        self._parse_format(stream)
+        return self
+    
+    def __repr__(self):
+    
+        return self.repr_format % self.fields
 
 
 class Tversion(StyxMessage):
 
-    # size[4] Tversion tag[2] msize[4] version[s]
-    
     code = 100
+    format = "size[4] Tversion tag[2] msize[4] version[s]"
+    repr_format = "Tversion(tag=%(tag)s, msize=%(msize)s, version=%(version)s)"
     
     def __init__(self, tag = None, msize = 0, version = ""):
     
         self.tag = tag
         self.msize = msize
         self.version = version
-    
-    def __repr__(self):
-        return "Tversion(tag=%s, msize=%s, version=%s)" % (
-            repr(self.tag), repr(self.msize), repr(self.version))
-    
-    def parse(self, tag, size, stream):
-    
-        self.init(tag, size)
-        self.msize = struct.unpack("<I", stream.recv(4))
-        self.version = self.decode_string(stream)
-        return self
     
     def write(self, stream):
     
@@ -115,26 +129,15 @@ class Tversion(StyxMessage):
 
 class Rversion(StyxMessage):
 
-    # size[4] Rversion tag[2] msize[4] version[s]
-    
     code = 101
+    format = "size[4] Rversion tag[2] msize[4] version[s]"
+    repr_format = "Rversion(tag=%(tag)s, msize=%(msize)s, version=%(version)s)"
     
     def __init__(self, tag = None, msize = 0, version = ""):
     
         self.tag = tag
         self.msize = msize
         self.version = version
-    
-    def __repr__(self):
-        return "Rversion(tag=%s, msize=%s, version=%s)" % (
-            repr(self.tag), repr(self.msize), repr(self.version))
-    
-    def parse(self, tag, size, stream):
-    
-        self.init(tag, size)
-        self.msize = struct.unpack("<I", stream.recv(4))
-        self.version = self.decode_string(stream)
-        return self
     
     def write(self, stream):
     
@@ -175,3 +178,23 @@ MessageTypes = {
 #    Twstat.code: Twstat,
 #    Rwstat.code: Rwstat 
     }
+
+
+def parse(sock = None, data = None):
+
+    if sock:
+        stream = SocketReceiver(sock)
+    elif data:
+        stream = StringReceiver(data)
+    else:
+        raise StyxError("No valid data to parse.")
+    
+    # Read the message size (including the size itself), type and tag.
+    size = struct.unpack("<I", stream.recv(4))[0]
+    message_type = struct.unpack("<b", stream.recv(1))[0]
+    tag = struct.unpack("<H", stream.recv(2))[0]
+    
+    # Find the relevant message class to handle this type and create an
+    # instance of it to parse the message data.
+    Message = MessageTypes[message_type]
+    return Message().parse(size, tag, stream)
