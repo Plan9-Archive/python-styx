@@ -76,6 +76,67 @@ def encode_qid(qid):
 
     return struct.pack("<BIQ", *qid)
 
+def decode_format(stream, obj):
+
+    for name, length in obj.format:
+    
+        if length == "s":
+            # UTF-8 string
+            value = decode_string(stream)
+        elif length == "n":
+            # n bytes of raw data
+            value = decode_data(stream)
+        elif length == 1:
+            value = struct.unpack("<B", stream.recv(1))[0]
+        elif length == 2:
+            value = struct.unpack("<H", stream.recv(2))[0]
+        elif length == 4:
+            value = struct.unpack("<I", stream.recv(4))[0]
+        elif length == 8:
+            value = struct.unpack("<Q", stream.recv(8))[0]
+        elif name == "qid":
+            value = decode_qid(stream)
+        elif name == "stat":
+            value = Stat()
+            value.decode(stream)
+        elif length in obj.__dict__:
+            value = stream.recv(obj.__dict__[length])
+        else:
+            raise StyxError("decode_format: Unknown field length specifier: %s" % length)
+        
+        obj.__dict__[name] = value
+
+def encode_format(stream, obj):
+
+    data = ""
+    
+    for name, length in obj.format:
+    
+        value = obj.__dict__[name]
+        
+        if length == "s":
+            # UTF-8 string
+            data += encode_string(value)
+        elif length == "n":
+            # n bytes of raw data
+            data += encode_data(value)
+        elif length == 1:
+            data += struct.pack("<B", value)
+        elif length == 2:
+            data += struct.pack("<H", value)
+        elif length == 4:
+            data += struct.pack("<I", value)
+        elif length == 8:
+            data += struct.pack("<Q", value)
+        elif name == "qid":
+            data += encode_qid(value)
+        elif name == "stat":
+            data += value.encode()
+        else:
+            data += value
+    
+    return data
+
 
 class StyxError(Exception):
     pass
@@ -88,33 +149,6 @@ class StyxMessage:
         self.size = size
         self.tag = tag
     
-    def decode(self, size, tag, stream):
-    
-        self.init(size, tag)
-        
-        for name, length in self.format:
-        
-            if length == "s":
-                # UTF-8 string
-                value = decode_string(stream)
-            elif length == "n":
-                # n bytes of raw data
-                value = decode_data(stream)
-            elif length == 2:
-                value = struct.unpack("<H", stream.recv(2))[0]
-            elif length == 4:
-                value = struct.unpack("<I", stream.recv(4))[0]
-            elif length == 8:
-                value = struct.unpack("<Q", stream.recv(8))[0]
-            elif name == "qid":
-                value = decode_qid(stream)
-            else:
-                raise StyxError("Unknown field length specifier: %s" % length)
-            
-            self.__dict__[name] = value
-        
-        return self
-    
     def __repr__(self):
     
         s = self.msg_name + "(tag=" + repr(self.tag)
@@ -124,41 +158,21 @@ class StyxMessage:
         
         return s + ")"
     
+    def decode(self, size, tag, stream):
+    
+        self.init(size, tag)
+        decode_format(stream, self)
+        return self
+    
     def encode(self, stream):
     
         # Start with the message type and tag before adding all the other pieces.
-        data = struct.pack("<bH", self.code, self.tag)
-        
-        data += self._encode_format(stream)
+        data = struct.pack("<BH", self.code, self.tag)
+        data += encode_format(stream, self)
         
         # Finally, prepend the length to the byte string and send it.
         data = struct.pack("<I", len(data) + 4) + data
         stream.sendall(data)
-    
-    def _encode_format(self, stream):
-    
-        data = ""
-        
-        for name, length in self.format:
-        
-            value = self.__dict__[name]
-            
-            if length == "s":
-                # UTF-8 string
-                data += encode_string(value)
-            elif length == "n":
-                # n bytes of raw data
-                data += encode_data(value)
-            elif length == 2:
-                data += struct.pack("<H", value)
-            elif length == 4:
-                data += struct.pack("<I", value)
-            elif length == 8:
-                data += struct.pack("<Q", value)
-            elif name == "qid":
-                data += encode_qid(value)
-        
-        return data
 
 
 class Tversion(StyxMessage):
@@ -212,6 +226,176 @@ class Rattach(StyxMessage):
         self.qid = qid
 
 
+class Rerror(StyxMessage):
+
+    msg_name = "Rerror"
+    code = 107
+    format = [("ename", "s")]
+    
+    def __init__(self, tag = None, ename = None):
+    
+        self.tag = tag
+        self.ename = ename
+
+
+class Twalk(StyxMessage):
+
+    msg_name = "Twalk"
+    code = 110
+    format = [("fid", 4), ("newfid", 4), ("nwname", 2)] # nwname of wname[s]
+    
+    def __init__(self, tag = None, fid = None, newfid = None, wname = []):
+    
+        self.tag = tag
+        self.fid = fid
+        self.newfid = newfid
+        self.wname = wname
+        self.nwname = len(wname)
+    
+    def decode(self, size, tag, stream):
+    
+        StyxMessage.decode(self, size, tag, stream)
+        
+        # Decode the names.
+        self.wname = []
+        i = 0
+        while i < self.nwname:
+            self.wname.append(decode_string(stream))
+            i += 1
+        
+        self.format.append(("wname", "nwname"))
+        
+        return self
+    
+    def encode(self, stream):
+    
+        data = struct.pack("<BH", self.code, self.tag)
+        
+        self.nwname = len(self.wname)
+        data += encode_format(stream, self)
+        
+        # Encode the names separately.
+        for name in self.wname:
+            data += encode_string(name)
+        
+        data = struct.pack("<I", len(data) + 4) + data
+        stream.sendall(data)
+
+class Rwalk(StyxMessage):
+
+    msg_name = "Rwalk"
+    code = 111
+    format = [("nwqid", 2)] # nwqid of wqid[13]
+    
+    def __init__(self, tag = None, wqid = []):
+    
+        self.tag = tag
+        self.wqid = wqid
+        self.nwqid = len(wqid)
+    
+    def decode(self, size, tag, stream):
+    
+        StyxMessage.decode(self, size, tag, stream)
+        
+        # Decode the qids.
+        self.wqid = []
+        i = 0
+        while i < self.nwqid:
+            self.wqid.append(decode_qid(stream))
+            i += 1
+        
+        self.format.append(("wqid", "nwqid"))
+        
+        return self
+    
+    def encode(self, stream):
+    
+        data = struct.pack("<BH", self.code, self.tag)
+        
+        self.nwqid = len(self.wqid)
+        data += encode_format(stream, self)
+        
+        # Encode the qids separately.
+        for qid in self.wqid:
+            data += encode_qid(qid)
+        
+        data = struct.pack("<I", len(data) + 4) + data
+        stream.sendall(data)
+
+
+class Topen(StyxMessage):
+
+    msg_name = "Topen"
+    code = 112
+    format = [("fid", 4), ("mode", 1)]
+    
+    def __init__(self, tag = None, fid = None, mode = None):
+    
+        self.tag = tag
+        self.fid = fid
+        self.mode = mode
+
+class Ropen(StyxMessage):
+
+    msg_name = "Ropen"
+    code = 113
+    format = [("qid", 13), ("iounit", 4)]
+    
+    def __init__(self, tag = None, qid = None, iounit = None):
+    
+        self.tag = tag
+        self.qid = qid
+        self.iounit = iounit
+
+
+class Tread(StyxMessage):
+
+    msg_name = "Tread"
+    code = 116
+    format = [("fid", 4), ("offset", 8), ("count", 4)]
+    
+    def __init__(self, tag = None, fid = None, offset = 0, count = 0):
+    
+        self.tag = tag
+        self.fid = fid
+        self.offset = offset
+        self.count = count
+
+class Rread(StyxMessage):
+
+    msg_name = "Rread"
+    code = 117
+    format = [("count", 4), ("data", "count")]
+    
+    def __init__(self, tag = None, data = ""):
+    
+        self.tag = tag
+        self.data = data
+        self.count = len(data)
+
+
+class Tclunk(StyxMessage):
+
+    msg_name = "Tclunk"
+    code = 120
+    format = [("fid", 4)]
+    
+    def __init__(self, tag = None, fid = None):
+    
+        self.tag = tag
+        self.fid = fid
+
+class Rclunk(StyxMessage):
+
+    msg_name = "Rclunk"
+    code = 121
+    format = []
+    
+    def __init__(self, tag = None):
+    
+        self.tag = tag
+
+
 class Tstat(StyxMessage):
 
     msg_name = "Tstat"
@@ -230,23 +414,26 @@ class Rstat(StyxMessage):
     # Because the format of this message describes the stat information as
     # stat[n] it includes a 16-bit length, but the stat object itself
     # includes its own length field.
-    format = [
-        ("stat_size", 2), ("size", 2), ("type", 2), ("dev", 4), ("qid", 13),
-        ("mode", 4), ("atime", 4), ("mtime", 4), ("length", 8), ("name", "s"),
-        ("uid", "s"), ("gid", "s"), ("muid", "s")
-        ]
+    format = [("stat_size", 2), ("stat", "stat")]
     
     def __init__(self, tag = None, stat = None):
     
         self.tag = tag
         self.stat = stat
     
+    def __repr__(self):
+    
+        return self.msg_name + "(tag=%s, stat=%s)" % (repr(self.tag), repr(self.stat))
+    
     def encode(self, stream):
     
-        data = struct.pack("<bH", self.code, self.tag)
-        
         # Encode the stat structure.
-        data += self.stat.encode()
+        stat_data = self.stat.encode()
+        
+        # Prepend the size of the stat structure itself.
+        stat_data = encode_data(stat_data)
+        
+        data = struct.pack("<BH", self.code, self.tag) + stat_data
         
         data = struct.pack("<I", len(data) + 4) + data
         stream.sendall(data)
@@ -254,8 +441,15 @@ class Rstat(StyxMessage):
 
 class Stat:
 
-    def __init__(self, type, dev, qid, mode, atime, mtime, length, name, uid,
-                       gid, muid):
+    format = [
+        ("size", 2), ("type", 2), ("dev", 4), ("qid", 13), ("mode", 4),
+        ("atime", 4), ("mtime", 4), ("length", 8), ("name", "s"), ("uid", "s"),
+        ("gid", "s"), ("muid", "s")
+        ]
+    
+    def __init__(self, type = 0, dev = 0, qid = (0, 0, 0), mode = 0,
+                       atime = 0, mtime = 0, length = 0, name = u"", uid = u"",
+                       gid = "", muid = u""):
     
         self.type = type
         self.dev = dev
@@ -269,6 +463,18 @@ class Stat:
         self.gid = gid
         self.muid = muid
     
+    def __repr__(self):
+    
+        pieces = []
+        for name, length in self.format:
+            pieces.append("%s=%s" % (name, repr(self.__dict__[name])))
+        
+        return "Stat(" + ", ".join(pieces) + ")"
+    
+    def decode(self, stream):
+    
+        decode_format(stream, self)
+    
     def encode(self):
     
         args = (self.type, self.dev) + self.qid + (self.mode, self.atime, self.mtime, self.length)
@@ -279,90 +485,7 @@ class Stat:
         data += encode_string(self.muid)
         
         # Prepend the size of the fields within the stat structure.
-        data = encode_data(data)
-        
-        # Prepend the size of the stat structure itself.
         return encode_data(data)
-
-
-class Twalk(StyxMessage):
-
-    msg_name = "Twalk"
-    code = 110
-    format = [("fid", 4), ("newfid", 4), ("nwname", 2)] # nwname of wname[s]
-    
-    def __init__(self, tag = None, fid = None, newfid = None, wname = None):
-    
-        self.tag = tag
-        self.fid = fid
-        self.newfid = newfid
-        self.wname = wname
-    
-    def decode(self, size, tag, stream):
-    
-        StyxMessage.decode(self, size, tag, stream)
-        
-        # Decode the names.
-        self.wname = []
-        i = 0
-        while i < self.nwname:
-            self.wname.append(decode_string(stream))
-            i += 1
-        
-        return self
-    
-    def encode(self, stream):
-    
-        data = struct.pack("<bH", self.code, self.tag)
-        
-        self.nwname = len(self.wname)
-        data += self._encode_format(stream)
-        
-        # Encode the names separately.
-        for name in self.wname:
-            data += encode_string(name)
-        
-        data = struct.pack("<I", len(data) + 4) + data
-        stream.sendall(data)
-
-
-class Rwalk(StyxMessage):
-
-    msg_name = "Rwalk"
-    code = 111
-    format = [("nwqid", 2)] # nwqid of wqid[13]
-    
-    def __init__(self, tag = None, wqid = None):
-    
-        self.tag = tag
-        self.wqid = wqid
-    
-    def decode(self, size, tag, stream):
-    
-        StyxMessage.decode(self, size, tag, stream)
-        
-        # Decode the qids.
-        self.wqid = []
-        i = 0
-        while i < self.nwqid:
-            self.wqid.append(decode_qid(stream))
-            i += 1
-        
-        return self
-    
-    def encode(self, stream):
-    
-        data = struct.pack("<bH", self.code, self.tag)
-        
-        self.nwqid = len(self.wqid)
-        data += self._encode_format(stream)
-        
-        # Encode the qids separately.
-        for qid in self.wqid:
-            data += encode_qid(qid)
-        
-        data = struct.pack("<I", len(data) + 4) + data
-        stream.sendall(data)
 
 
 MessageTypes = {
@@ -373,21 +496,21 @@ MessageTypes = {
     Tattach.code: Tattach,
     Rattach.code: Rattach,
 #    Terror.code: Terror,
-#    Rerror.code: Rerror,
+    Rerror.code: Rerror,
 #    Tflush.code: Tflush,
 #    Rflush.code: Rflush,
     Twalk.code: Twalk,
     Rwalk.code: Rwalk,
-#    Topen.code: Topen,
-#    Ropen.code: Ropen,
+    Topen.code: Topen,
+    Ropen.code: Ropen,
 #    Tcreate.code: Tcreate,
 #    Rcreate.code: Rcreate,
-#    Tread.code: Tread,
-#    Rread.code: Rread,
+    Tread.code: Tread,
+    Rread.code: Rread,
 #    Twrite.code: Twrite,
 #    Rwrite.code: Rwrite,
-#    Tclunk.code: Tclunk,
-#    Rclunk.code: Rclunk,
+    Tclunk.code: Tclunk,
+    Rclunk.code: Rclunk,
 #    Tremove.code: Tremove,
 #    Rremove.code: Rremove,
     Tstat.code: Tstat,
@@ -412,5 +535,8 @@ def decode(sock = None, data = None):
     
     # Find the relevant message class to handle this type and create an
     # instance of it to parse the message data.
-    Message = MessageTypes[message_type]
-    return Message().decode(size, tag, stream)
+    try:
+        Message = MessageTypes[message_type]
+        return Message().decode(size, tag, stream)
+    except:
+        return size, message_type, tag, stream
