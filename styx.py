@@ -466,14 +466,22 @@ class Stat:
     def __repr__(self):
     
         pieces = []
-        for name, length in self.format:
+        for name, length in self.format[1:]:
             pieces.append("%s=%s" % (name, repr(self.__dict__[name])))
         
         return "Stat(" + ", ".join(pieces) + ")"
     
-    def decode(self, stream):
+    def decode(self, stream = None, data = None):
     
-        decode_format(stream, self)
+        if stream:
+            decode_format(stream, self)
+            return self
+        else:
+            stream = StringReceiver(data)
+            items = []
+            while stream.ptr < len(data):
+                items.append(Stat().decode(stream))
+            return items
     
     def encode(self):
     
@@ -539,4 +547,5 @@ def decode(sock = None, data = None):
         Message = MessageTypes[message_type]
         return Message().decode(size, tag, stream)
     except:
-        return size, message_type, tag, stream
+        #return size, message_type, tag, stream
+        raise
