@@ -8,6 +8,8 @@ class StyxFSError(Exception):
 
 class StyxFSServer:
 
+    MAX_MSG_SIZE = 0
+    
     def __init__(self, directory):
     
         self.dir = directory
@@ -28,9 +30,10 @@ class StyxFSServer:
                 
                 try:
                     handler = self.handlers[message.code]
-                    handler(self, conn, client, message)
+                    reply = handler(self, conn, client, message)
+                    reply.encode(conn)
                 except KeyError:
-                    self.Rerror(conn, message, "Not connected.")
+                    raise # self.Rerror(conn, message, "Not connected.")
                 except StyxFSError, e:
                     self.Rerror(conn, message, e.message)
     
@@ -38,48 +41,66 @@ class StyxFSServer:
     
         self.clients[client] = FileStore(self.dir)
         
-        reply = styx.Rversion(msg.tag, msg.msize, msg.version)
-        reply.encode(conn)
+        return styx.Rversion(msg.tag, msg.msize, msg.version)
     
     def Tattach(self, conn, client, msg):
     
         store = self.clients[client]
         
         qid = store.get_root_qid(msg.fid, msg.afid, msg.uname, msg.aname)
-        reply = styx.Rattach(msg.tag, qid)
-        reply.encode(conn)
+        return styx.Rattach(msg.tag, qid)
     
     def Tstat(self, conn, client, msg):
     
         store = self.clients[client]
         
         s = store.stat(msg.fid)
-        reply = styx.Rstat(msg.tag, s)
-        reply.encode(conn)
+        return styx.Rstat(msg.tag, s)
     
     def Twalk(self, conn, client, msg):
     
         store = self.clients[client]
         
         # The fid must have an existing qid.
-        qid = store.get_qid(msg.fid)
-        path = store.get_path(msg.fid)
+        qid, path = store.get_qid_path(msg.fid)
         
         # Generate qids for each of the elements in the path.
         qids = []
         for element in msg.wname:
             path += element
-            store.make_qid(fid, path)
-            qids.append(store.get_qid(fid))
+            qid = store.make_qid(path)
+            qids.append(qid)
         
-        s = store.stat(msg.fid)
+        store.set_qid_path(msg.newfid, qid, path)
         
-        # The newfid must not have an existing qid. We use the newfid to
-        # register the qid for the last path element.
-        store.get_qid(msg.newfid)
+        return styx.Rwalk(msg.tag, qids)
+    
+    def Topen(self, conn, client, msg):
+    
+        store = self.clients[client]
         
-        reply = styx.Rstat(msg.tag, s)
-        reply.encode(conn)
+        # The fid must have an existing qid.
+        qid, path = store.get_qid_path(msg.fid)
+        
+        return styx.Ropen(msg.tag, qid, self.MAX_MSG_SIZE)
+    
+    def Tread(self, conn, client, msg):
+    
+        store = self.clients[client]
+        
+        # The fid must have an existing qid.
+        data = store.read(msg.fid, msg.offset, msg.count)
+        
+        return styx.Rread(msg.tag, data)
+    
+    def Tclunk(self, conn, client, msg):
+    
+        store = self.clients[client]
+        
+        # Release/free the qid.
+        store.free_qid_path(msg.fid)
+        
+        return styx.Rclunk(msg.tag)
     
     def Rerror(self, conn, msg, message_string):
     
@@ -89,7 +110,10 @@ class StyxFSServer:
         styx.Tversion.code: Tversion,
         styx.Tattach.code: Tattach,
         styx.Tstat.code: Tstat,
-        styx.Twalk.code: Twalk
+        styx.Twalk.code: Twalk,
+        styx.Topen.code: Topen,
+        styx.Tread.code: Tread,
+        styx.Tclunk.code: Tclunk
         }
 
 
@@ -109,21 +133,21 @@ class FileStore:
     def get_root_qid(self, fid, afid, uname, aname):
     
         qid = self.make_qid("")
-        self.qids[fid] = qid
-        self.paths[fid] = ""
+        self.set_qid_path(fid, qid, "")
         return qid
     
-    def get_qid(self, fid):
+    def get_qid_path(self, fid):
     
-        return self.qids[fid]
+        return self.qids[fid], self.paths[fid]
     
-    def get_path(self, fid):
+    def set_qid_path(self, fid, qid, path):
     
-        return self.paths[fid]
+        self.qids[fid] = qid
+        self.paths[fid] = path
     
     def make_qid(self, path):
     
-        path.lstrip("/")
+        path = path.lstrip("/")
         
         file_path = os.path.join(self.dir, path)
         s = os.stat(file_path)
@@ -137,12 +161,21 @@ class FileStore:
         
         return (qtype, qversion, qpath)
     
+    def free_qid_path(self, fid):
+    
+        del self.qids[fid]
+        del self.paths[fid]
+    
     def stat(self, fid):
     
         qid = self.qids[fid]
-        file_path = self.paths[fid]
-        
-        real_path = os.path.join(self.dir, file_path)
+        path = self.paths[fid]
+        return self._stat(qid, path)
+    
+    def _stat(self, qid, path):
+    
+        name = os.path.split(path)[1]
+        real_path = os.path.join(self.dir, path)
         s = os.stat(real_path)
         
         if os.path.isdir(real_path):
@@ -155,7 +188,30 @@ class FileStore:
         mode |= (s.st_mode & 0777)
         
         return styx.Stat(0, 0, qid, mode, s.st_atime, s.st_mtime, size,
-                         os.getenv("USER", "inferno"), "styxfs", "styxfs", "")
+                         name, "styxfs", "styxfs", "")
+    
+    def read(self, fid, offset, count):
+    
+        path = self.paths[fid]
+        real_path = os.path.join(self.dir, path)
+        data = ""
+        
+        if os.path.isdir(real_path):
+            files = os.listdir(real_path)
+            files.sort()
+            
+            for file_name in files:
+                qid = self.make_qid(path + "/" + file_name)
+                data += self._stat(qid, file_name).encode()
+            
+            return data[offset:offset + count]
+        else:
+            f = open(real_path, "rb")
+            f.seek(offset)
+            data = f.read(count)
+            f.close()
+            
+            return data
 
 
 if __name__ == "__main__":
