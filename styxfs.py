@@ -31,11 +31,12 @@ class StyxFSServer:
                 try:
                     handler = self.handlers[message.code]
                     reply = handler(self, conn, client, message)
-                    reply.encode(conn)
                 except KeyError:
-                    raise # self.Rerror(conn, message, "Not connected.")
+                    raise # reply = styx.Rerror(message.tag, "Not connected.")
                 except StyxFSError, e:
-                    self.Rerror(conn, message, e.message)
+                    reply = styx.Rerror(message.tag, e.message)
+                
+                reply.encode(conn)
     
     def Tversion(self, conn, client, msg):
     
@@ -61,15 +62,22 @@ class StyxFSServer:
     
         store = self.clients[client]
         
-        # The fid must have an existing qid.
+        # The fid must have an existing qid but not be in use for open or create.
         qid, path = store.get_qid_path(msg.fid)
         
         # Generate qids for each of the elements in the path.
         qids = []
-        for element in msg.wname:
-            path += element
-            qid = store.make_qid(path)
-            qids.append(qid)
+        try:
+            for element in msg.wname:
+                path += element
+                qid = store.make_qid(path)
+                qids.append(qid)
+        
+        except OSError:
+            if len(qids) > 0:
+                return styx.Rwalk(msg.tag, qids)
+            else:
+                return styx.Rerror(msg.tag, "Not found.")
         
         store.set_qid_path(msg.newfid, qid, path)
         

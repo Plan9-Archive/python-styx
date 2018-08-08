@@ -302,8 +302,6 @@ class Rwalk(StyxMessage):
             self.wqid.append(decode_qid(stream))
             i += 1
         
-        self.format.append(("wqid", "nwqid"))
-        
         return self
     
     def encode(self, stream):
