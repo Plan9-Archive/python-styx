@@ -263,8 +263,6 @@ class Twalk(StyxMessage):
             self.wname.append(decode_string(stream))
             i += 1
         
-        self.format.append(("wname", "nwname"))
-        
         return self
     
     def encode(self, stream):
