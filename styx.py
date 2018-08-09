@@ -344,6 +344,33 @@ class Ropen(StyxMessage):
         self.iounit = iounit
 
 
+class Tcreate(StyxMessage):
+
+    msg_name = "Tcreate"
+    code = 114
+    format = [("fid", 4), ("name", "s"), ("perm", 4), ("mode", 1)]
+    
+    def __init__(self, tag = None, fid = None, name = "", perm = 0, mode = None):
+    
+        self.tag = tag
+        self.fid = fid
+        self.name = name
+        self.perm = perm
+        self.mode = mode
+
+class Rcreate(StyxMessage):
+
+    msg_name = "Rcreate"
+    code = 115
+    format = [("qid", 13), ("iounit", 4)]
+    
+    def __init__(self, tag = None, qid = None, iounit = None):
+    
+        self.tag = tag
+        self.qid = qid
+        self.iounit = iounit
+
+
 class Tread(StyxMessage):
 
     msg_name = "Tread"
@@ -368,6 +395,32 @@ class Rread(StyxMessage):
         self.tag = tag
         self.data = data
         self.count = len(data)
+
+
+class Twrite(StyxMessage):
+
+    msg_name = "Twrite"
+    code = 118
+    format = [("fid", 4), ("offset", 8), ("count", 4), ("data", "count")]
+    
+    def __init__(self, tag = None, fid = None, offset = 0, data = ""):
+    
+        self.tag = tag
+        self.fid = fid
+        self.offset = offset
+        self.count = len(data)
+        self.data = data
+
+class Rwrite(StyxMessage):
+
+    msg_name = "Rwrite"
+    code = 119
+    format = [("count", 4)]
+    
+    def __init__(self, tag = None, count = 0):
+    
+        self.tag = tag
+        self.count = count
 
 
 class Tclunk(StyxMessage):
@@ -437,6 +490,11 @@ class Rstat(StyxMessage):
 
 class Stat:
 
+    DMDIR    = 0x80000000
+    DMAPPEND = 0x40000000
+    DMEXCL   = 0x20000000
+    DMTMP    = 0x04000000
+    
     format = [
         ("size", 2), ("type", 2), ("dev", 4), ("qid", 13), ("mode", 4),
         ("atime", 4), ("mtime", 4), ("length", 8), ("name", "s"), ("uid", "s"),
@@ -507,12 +565,12 @@ MessageTypes = {
     Rwalk.code: Rwalk,
     Topen.code: Topen,
     Ropen.code: Ropen,
-#    Tcreate.code: Tcreate,
-#    Rcreate.code: Rcreate,
+    Tcreate.code: Tcreate,
+    Rcreate.code: Rcreate,
     Tread.code: Tread,
     Rread.code: Rread,
-#    Twrite.code: Twrite,
-#    Rwrite.code: Rwrite,
+    Twrite.code: Twrite,
+    Rwrite.code: Rwrite,
     Tclunk.code: Tclunk,
     Rclunk.code: Rclunk,
 #    Tremove.code: Tremove,
