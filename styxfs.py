@@ -69,7 +69,7 @@ class StyxFSServer:
         qids = []
         try:
             for element in msg.wname:
-                path += element
+                path += "/" + element
                 qid = store.make_qid(path)
                 qids.append(qid)
         
@@ -90,7 +90,28 @@ class StyxFSServer:
         # The fid must have an existing qid.
         qid, path = store.get_qid_path(msg.fid)
         
+        if not store.open(msg.fid, msg.mode):
+            return styx.Rerror(msg.tag, "Cannot open file.")
+        
         return styx.Ropen(msg.tag, qid, self.MAX_MSG_SIZE)
+    
+    def Tcreate(self, conn, client, msg):
+    
+        store = self.clients[client]
+        
+        # The fid must have an existing qid that corresponds to a directory
+        # and cannot be itself in use.
+        qid, path = store.get_qid_path(msg.fid)
+        
+        new_qid = store.create(msg.fid, msg.name, msg.perm)
+        if new_qid == False:
+            return styx.Rerror(msg.tag, "Cannot create file.")
+        
+        # The fid now refers to the newly open file or directory.
+        if not store.open(msg.fid, msg.mode):
+            return styx.Rerror(msg.tag, "Cannot open file.")
+        
+        return styx.Rcreate(msg.tag, new_qid, self.MAX_MSG_SIZE)
     
     def Tread(self, conn, client, msg):
     
@@ -100,6 +121,15 @@ class StyxFSServer:
         data = store.read(msg.fid, msg.offset, msg.count)
         
         return styx.Rread(msg.tag, data)
+    
+    def Twrite(self, conn, client, msg):
+    
+        store = self.clients[client]
+        
+        # The fid must have an existing qid.
+        count = store.write(msg.fid, msg.offset, msg.data)
+        
+        return styx.Rwrite(msg.tag, count)
     
     def Tclunk(self, conn, client, msg):
     
@@ -120,7 +150,9 @@ class StyxFSServer:
         styx.Tstat.code: Tstat,
         styx.Twalk.code: Twalk,
         styx.Topen.code: Topen,
+        styx.Tcreate.code: Tcreate,
         styx.Tread.code: Tread,
+        styx.Twrite.code: Twrite,
         styx.Tclunk.code: Tclunk
         }
 
@@ -137,6 +169,7 @@ class FileStore:
         self.dir = os.path.abspath(directory)
         self.qids = {}
         self.paths = {}
+        self.opened = {}
     
     def get_root_qid(self, fid, afid, uname, aname):
     
@@ -150,6 +183,8 @@ class FileStore:
     
     def set_qid_path(self, fid, qid, path):
     
+        path = path.lstrip("/")
+        
         self.qids[fid] = qid
         self.paths[fid] = path
     
@@ -157,14 +192,16 @@ class FileStore:
     
         path = path.lstrip("/")
         
-        file_path = os.path.join(self.dir, path)
-        s = os.stat(file_path)
-        if os.path.isdir(file_path):
+        real_path = os.path.join(self.dir, path)
+        s = os.stat(real_path)
+        if os.path.isdir(real_path):
             qtype = 0x80
         else:
             qtype = 0
         
         qversion = 0
+        
+        # Use the inode number to uniquely refer to the object at this location.
         qpath = s.st_ino
         
         return (qtype, qversion, qpath)
@@ -173,6 +210,9 @@ class FileStore:
     
         del self.qids[fid]
         del self.paths[fid]
+        
+        if fid in self.opened:
+            del self.opened[fid]
     
     def stat(self, fid):
     
@@ -182,6 +222,8 @@ class FileStore:
     
     def _stat(self, qid, path):
     
+        path = path.lstrip("/")
+        
         name = os.path.split(path)[1]
         real_path = os.path.join(self.dir, path)
         s = os.stat(real_path)
@@ -198,6 +240,64 @@ class FileStore:
         return styx.Stat(0, 0, qid, mode, s.st_atime, s.st_mtime, size,
                          name, "styxfs", "styxfs", "")
     
+    def create(self, fid, name, perm):
+    
+        if name in (".", ".."):
+            return False
+        
+        elif fid in self.opened:
+            return False
+        else:
+            # Obtain the real path of the directory.
+            path = self.paths[fid]
+            real_path = os.path.join(self.dir, path)
+            
+            if not os.path.isdir(real_path):
+                return False
+            
+            # Read the directory permissions.
+            dir_perm = os.stat(real_path).st_mode
+            
+            new_real_path = os.path.join(real_path, name)
+            
+            if os.path.exists(new_real_path):
+                return False
+            
+            # Create the file or directory with suitable permissions.
+            try:
+                if perm & styx.Stat.DMDIR:
+                    # Only pass the lowest permission bits through to the
+                    # underlying filing system.
+                    mode = dir_perm & 0777
+                    os.mkdir(new_real_path, mode)
+                else:
+                    mode = dir_perm & 0666
+                    os.mknod(new_real_path, mode, stat.S_IFREG)
+            
+            except OSError:
+                return False
+            
+            # Update the fid to refer to the new object.
+            qid = self.make_qid(path + "/" + name)
+            self.set_qid_path(fid, qid, path + "/" + name)
+        
+        return qid
+    
+    def open(self, fid, mode):
+    
+        if fid in self.opened:
+            self.opened[fid] = mode
+            if mode & styx.Stat.DMEXCL:
+                return False
+        else:
+            self.opened[fid] = mode
+        
+        return True
+    
+    def is_opened(self, fid):
+    
+        return fid in self.opened
+    
     def read(self, fid, offset, count):
     
         path = self.paths[fid]
@@ -205,12 +305,15 @@ class FileStore:
         data = ""
         
         if os.path.isdir(real_path):
+        
+            # Iterate over a sorted list of files in the directory, constructing
+            # a byte string of information about them that can be sent in chunks.
             files = os.listdir(real_path)
             files.sort()
             
             for file_name in files:
                 qid = self.make_qid(path + "/" + file_name)
-                data += self._stat(qid, file_name).encode()
+                data += self._stat(qid, path + "/" + file_name).encode()
             
             return data[offset:offset + count]
         else:
@@ -220,6 +323,21 @@ class FileStore:
             f.close()
             
             return data
+    
+    def write(self, fid, offset, data):
+    
+        path = self.paths[fid]
+        real_path = os.path.join(self.dir, path)
+        
+        if os.path.isdir(real_path):
+            return styx.Rerror(msg.tag, "Not a file.")
+        
+        f = open(real_path, "r+wb")
+        f.seek(offset)
+        f.write(data)
+        f.close()
+        
+        return len(data)
 
 
 if __name__ == "__main__":
