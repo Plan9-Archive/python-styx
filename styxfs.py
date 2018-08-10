@@ -68,14 +68,13 @@ class StyxFSServer:
         # Generate qids for each of the elements in the path, starting from the
         # path corresponding to the current fid.
         qids = []
-        new_path = [path]
+        new_path = path.split("/")
         try:
             for element in msg.wname:
             
                 if element == "..":
                     # Handle parent directories as path elements.
                     if new_path: new_path.pop()
-                    continue
                 else:
                     new_path.append(element)
                 
