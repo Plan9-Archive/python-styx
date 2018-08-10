@@ -1,6 +1,23 @@
 #!/usr/bin/env python
 
-import os, socket, stat, sys
+# styxfs.py - Simple file server, serving the contents of a directory.
+#
+# Copyright (C) 2018 David Boddie <david@boddie.org.uk>
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+import os, shutil, socket, stat, sys
 import styx
 
 class StyxFSError(Exception):
@@ -24,24 +41,29 @@ class StyxFSServer:
         while True:
         
             conn, client = s.accept()
+            self.clients[client] = FileStore(self.dir)
             
-            while True:
+            while client in self.clients:
+            
                 message = styx.decode(sock=conn)
+                print message
                 
                 try:
                     handler = self.handlers[message.code]
                     reply = handler(self, conn, client, message)
                 except KeyError:
-                    raise # reply = styx.Rerror(message.tag, "Not connected.")
+                    reply = styx.Rerror(message.tag, "Unsupported message.")
                 except StyxFSError, e:
                     reply = styx.Rerror(message.tag, e.message)
+                except socket.error:
+                    # The connection was probably closed by the client.
+                    break
                 
+                print reply
                 reply.encode(conn)
     
     def Tversion(self, conn, client, msg):
     
-        self.clients[client] = FileStore(self.dir)
-        
         return styx.Rversion(msg.tag, msg.msize, msg.version)
     
     def Tattach(self, conn, client, msg):
@@ -149,11 +171,26 @@ class StyxFSServer:
         # Release/free the qid.
         store.free_qid_path(msg.fid)
         
+        # Additionally, if the fid refers to the root of the file system then
+        # remove the client from the clients dictionary to disconnect it.
+        if msg.fid == store.root_fid:
+            del self.clients[client]
+        
         return styx.Rclunk(msg.tag)
     
-    def Rerror(self, conn, msg, message_string):
+    def Tremove(self, conn, client, msg):
     
-        styx.Rerror(msg.tag, message_string).encode(conn)
+        store = self.clients[client]
+        
+        # Remove the file and clunk it whether the remove was successful or not.
+        result = store.remove(msg.fid)
+        
+        if result == True:
+            store.free_qid_path(msg.fid)
+            return styx.Rremove(msg.tag)
+        else:
+            store.free_qid_path(msg.fid)
+            return styx.Rerror(msg.tag, result)
     
     handlers = {
         styx.Tversion.code: Tversion,
@@ -164,7 +201,8 @@ class StyxFSServer:
         styx.Tcreate.code: Tcreate,
         styx.Tread.code: Tread,
         styx.Twrite.code: Twrite,
-        styx.Tclunk.code: Tclunk
+        styx.Tclunk.code: Tclunk,
+        styx.Tremove.code: Tremove
         }
 
 
@@ -181,11 +219,13 @@ class FileStore:
         self.qids = {}
         self.paths = {}
         self.opened = {}
+        self.root_fid = None
     
     def get_root_qid(self, fid, afid, uname, aname):
     
         qid = self.make_qid("")
         self.set_qid_path(fid, qid, "")
+        self.root_fid = fid
         return qid
     
     def get_qid_path(self, fid):
@@ -349,6 +389,22 @@ class FileStore:
         f.close()
         
         return len(data)
+    
+    def remove(self, fid):
+    
+        path = self.paths[fid]
+        real_path = os.path.join(self.dir, path)
+        
+        try:
+            if os.path.isdir(real_path):
+                os.rmdir(real_path)
+            else:
+                os.remove(real_path)
+        
+        except OSError, e:
+            return str(e)
+        
+        return True
 
 
 if __name__ == "__main__":
