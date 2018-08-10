@@ -15,7 +15,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-# Using the information from the Inferno man 5 0intro page.
+# Using the information from the Inferno man 5 pages.
 
 import struct
 
@@ -445,6 +445,28 @@ class Rclunk(StyxMessage):
         self.tag = tag
 
 
+class Tremove(StyxMessage):
+
+    msg_name = "Tremove"
+    code = 122
+    format = [("fid", 4)]
+    
+    def __init__(self, tag = None, fid = None):
+    
+        self.tag = tag
+        self.fid = fid
+
+class Rremove(StyxMessage):
+
+    msg_name = "Rremove"
+    code = 123
+    format = []
+    
+    def __init__(self, tag = None):
+    
+        self.tag = tag
+
+
 class Tstat(StyxMessage):
 
     msg_name = "Tstat"
@@ -573,8 +595,8 @@ MessageTypes = {
     Rwrite.code: Rwrite,
     Tclunk.code: Tclunk,
     Rclunk.code: Rclunk,
-#    Tremove.code: Tremove,
-#    Rremove.code: Rremove,
+    Tremove.code: Tremove,
+    Rremove.code: Rremove,
     Tstat.code: Tstat,
     Rstat.code: Rstat,
 #    Twstat.code: Twstat,
