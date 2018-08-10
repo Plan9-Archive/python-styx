@@ -65,12 +65,23 @@ class StyxFSServer:
         # The fid must have an existing qid but not be in use for open or create.
         qid, path = store.get_qid_path(msg.fid)
         
-        # Generate qids for each of the elements in the path.
+        # Generate qids for each of the elements in the path, starting from the
+        # path corresponding to the current fid.
         qids = []
+        new_path = [path]
         try:
             for element in msg.wname:
-                path += "/" + element
-                qid = store.make_qid(path)
+            
+                if element == "..":
+                    # Handle parent directories as path elements.
+                    if new_path: new_path.pop()
+                    continue
+                else:
+                    new_path.append(element)
+                
+                # Update the qid variable, create qids for each intermediate
+                # path, and record the qids created.
+                qid = store.make_qid("/".join(new_path))
                 qids.append(qid)
         
         except OSError:
@@ -79,7 +90,8 @@ class StyxFSServer:
             else:
                 return styx.Rerror(msg.tag, "Not found.")
         
-        store.set_qid_path(msg.newfid, qid, path)
+        # Set the qid and path for the newfid passed by the caller.
+        store.set_qid_path(msg.newfid, qid, "/".join(new_path))
         
         return styx.Rwalk(msg.tag, qids)
     
