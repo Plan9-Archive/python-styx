@@ -82,7 +82,6 @@ class Client:
     
     def send(self, msg):
     
-        print msg
         msg.encode(self.socket)
         
         tag = msg.tag
@@ -90,7 +89,6 @@ class Client:
         while tag not in self.replies:
         
             reply = styx.decode(sock=self.socket)
-            print reply
             if reply.tag == tag:
                 break
             else:
@@ -100,6 +98,10 @@ class Client:
             del self.replies[tag]
         
         if isinstance(reply, styx.Rerror):
+        
+            if hasattr(msg, "fid"):
+                self._clunk_old(msg.fid)
+            
             raise ClientError(reply.ename)
         
         return reply
@@ -108,19 +110,18 @@ class Client:
     
         self.send(styx.Tclunk(tag=2, fid=fid))
     
+    def _clunk_old(self, fid):
+    
+        # Clunk the fid only if it is not the root fid.
+        if fid != self.root_fid:
+            self._clunk(fid)
+    
     def _stat(self, fid):
     
         reply = self.send(styx.Tstat(tag=2, fid=fid))
         return reply.stat
     
-    def _next_fid(self):
-    
-        if self.current_fid != self.root_fid:
-            return self.current_fid + 1
-        else:
-            return self.root_fid + 1
-    
-    def ls(self, path):
+    def _walk(self, path):
     
         pieces = path.split("/")
         newfid = self._next_fid()
@@ -132,6 +133,21 @@ class Client:
             raise ClientError("No such file or directory: %s" % \
                 "/".join(pieces[:reply.nwqid]))
         
+        return newfid
+    
+    def _next_fid(self):
+    
+        # Alternate between the two integers above the root fid.
+        if self.current_fid != self.root_fid:
+            return self.current_fid + 1
+        else:
+            return self.root_fid + 1
+    
+    def ls(self, path = "", details = False):
+    
+        newfid = self._walk(path)
+        
+        # Determine whether the object is a file or directory.
         s = self._stat(newfid)
         
         if s.mode & styx.Stat.DMDIR:
@@ -151,24 +167,61 @@ class Client:
             
             info = styx.Stat().decode(data=data)
         else:
-            info = s
+            # If it is a file then just return the existing information.
+            info = [s]
         
-        self._clunk(newfid)
+        # Release the fid for the file so that it can be reused.
+        self._clunk_old(newfid)
+        
+        if not details:
+            info = map(lambda x: (x.name, x.uid, x.gid, x.mode), info)
+        
         return info
     
     def cd(self, path):
     
-        pieces = path.split("/")
-        newfid = self._next_fid()
+        newfid = self._walk(path)
         
-        reply = self.send(styx.Twalk(tag=2, fid=self.current_fid,
-                                     newfid=newfid, wname=pieces))
-        
-        if reply.nwqid < len(pieces):
-            raise ClientError("No such file or directory: %s" % \
-                "/".join(pieces[:reply.nwqid]))
-        
-        if self.current_fid != self.root_fid:
-            self._clunk(self.current_fid)
-        
+        self._clunk_old(self.current_fid)
         self.current_fid = newfid
+    
+    def mkdir(self, path, perm):
+    
+        pieces = path.split("/")
+        
+        # Walk to the directory regardless of whether it is the current
+        # directory because the fid will be reused for the new directory.
+        
+        if len(pieces) > 1:
+            fid = self._walk("/".join(path[:-1]))
+            name = path[-1]
+        else:
+            # Walk to the current directory.
+            fid = self._walk("")
+            name = path
+        
+        self.send(styx.Tcreate(tag=2, fid=fid, name=name,
+            perm=styx.Stat.DMDIR | perm, mode=0))
+        
+        # Release the fid so that it can be reused.
+        self._clunk_old(fid)
+    
+    def create(self, path, perm, mode):
+    
+        pieces = path.split("/")
+        
+        # Walk to the directory regardless of whether it is the current
+        # directory because the fid will be reused for the new file.
+        
+        if len(pieces) > 1:
+            fid = self._walk("/".join(path[:-1]))
+            name = path[-1]
+        else:
+            # Walk to the current directory.
+            fid = self._walk("")
+            name = path
+        
+        self.send(styx.Tcreate(tag=2, fid=fid, name=name, perm=perm, mode=mode))
+        
+        # Release the fid so that it can be reused.
+        self._clunk_old(fid)
