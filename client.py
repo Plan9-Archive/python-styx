@@ -26,6 +26,7 @@ class ClientError(Exception):
 class Client:
 
     MSIZE = 16384
+    MAXWELEM = 16
     
     def __init__(self, host = None, port = None, uname = None, aname = None):
     
@@ -44,9 +45,16 @@ class Client:
         
         self.socket = None
         self.msize = Client.MSIZE
+        
+        # Maintain an fid for the root of the file server and one for what we
+        # consider to be the current directory.
         self.root_fid = 0
+        self.first_fid = 1
+        self.last_fid = 3
         self.current_fid = None
         
+        # Keep a collection of replies in case they arrive in an order we don't
+        # expect.
         self.replies = {}
     
     def connect(self, host, port, uname, aname):
@@ -69,12 +77,13 @@ class Client:
         
         self.msize = min(self.msize, reply.msize)
         
-        reply = self.send(styx.Tattach(tag=1, fid=1, afid=0, uname=uname, aname=aname))
+        reply = self.send(styx.Tattach(tag=1, fid=0, afid=0, uname=uname, aname=aname))
         
-        self.root_fid = self.current_fid = 1
+        self.root_fid = self.current_fid = 0
     
     def disconnect(self):
     
+        # Clunk the root fid close the socket.
         self.send(styx.Tclunk(tag=2, fid=self.root_fid))
         self.socket.close()
         
@@ -98,10 +107,6 @@ class Client:
             del self.replies[tag]
         
         if isinstance(reply, styx.Rerror):
-        
-            if hasattr(msg, "fid"):
-                self._clunk_old(msg.fid)
-            
             raise ClientError(reply.ename)
         
         return reply
@@ -123,25 +128,58 @@ class Client:
     
     def _walk(self, path):
     
-        pieces = path.split("/")
-        newfid = self._next_fid()
+        elements = path.split("/")
+        fid = self.current_fid
         
-        reply = self.send(styx.Twalk(tag=2, fid=self.current_fid,
-                                     newfid=newfid, wname=pieces))
+        while True:
         
-        if reply.nwqid < len(pieces):
-            raise ClientError("No such file or directory: %s" % \
-                "/".join(pieces[:reply.nwqid]))
-        
-        return newfid
+            # Limit the number of path elements to walk.
+            pieces = elements[:Client.MAXWELEM]
+            elements = elements[Client.MAXWELEM:]
+            
+            # Use one of the allocated fids for the end point of the walk.
+            newfid = self._next_fid(fid)
+            
+            reply = self.send(styx.Twalk(tag=2, fid=fid, newfid=newfid,
+                                         wname=pieces))
+            
+            if reply.nwqid < len(pieces):
+                raise ClientError("No such file or directory: %s" % \
+                    "/".join(pieces[:reply.nwqid]))
+            
+            # Clunk the old fid if it is an intermediate fid used to walk part
+            # of the path. The first fid is the current fid, and we don't want
+            # to clunk that here.
+            if fid != self.current_fid:
+                self._clunk_old(fid)
+            
+            # If there are no more path elements to walk then return the newfid.
+            if not elements:
+                return newfid
+            
+            # Use the newfid as the new starting point and prepare to use the
+            # other allocated fid for the new end point.
+            fid = newfid
     
-    def _next_fid(self):
+    def _next_fid(self, fid):
     
-        # Alternate between the two integers above the root fid.
-        if self.current_fid != self.root_fid:
-            return self.current_fid + 1
+        # Find the position of the existing fid in the available range.
+        i = fid - self.first_fid
+        
+        # If the current fid is the same as the root fid then allocate the next
+        # fid in the available range.
+        if self.current_fid == self.root_fid:
+            return self.first_fid + ((i + 1) % 3)
+        
+        # Find the remaining available fid.
+        j = self.current_fid - self.first_fid
+        
+        i = (i + 1) % 3
+        if i != j:
+            return self.first_fid + i
         else:
-            return self.root_fid + 1
+            i = (i + 1) % 3
+            return self.first_fid + i
     
     def ls(self, path = "", details = False):
     
