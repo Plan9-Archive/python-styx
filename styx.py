@@ -206,6 +206,8 @@ class Tattach(StyxMessage):
     code = 104
     format = [("fid", 4), ("afid", 4), ("uname", "s"), ("aname", "s")]
     
+    NOFID = 0xffffffff
+    
     def __init__(self, tag = None, fid = None, afid = None, uname = None, aname = None):
     
         self.tag = tag
