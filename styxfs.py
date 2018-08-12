@@ -192,6 +192,22 @@ class StyxFSServer:
             store.free_qid_path(msg.fid)
             return styx.Rerror(msg.tag, result)
     
+    def Tflush(self, conn, client, msg):
+    
+        store = self.clients[client]
+        
+        # If we supported a queue of commands then we would remove any pending
+        # commands with tags matching msg.oldtag.
+        
+        return styx.Rflush(msg.tag)
+    
+    def Twstat(self, conn, client, msg):
+    
+        store = self.clients[client]
+        
+        s = store.wstat(msg.fid, msg.stat)
+        return styx.Rwstat(msg.tag)
+    
     handlers = {
         styx.Tversion.code: Tversion,
         styx.Tattach.code: Tattach,
@@ -202,7 +218,8 @@ class StyxFSServer:
         styx.Tread.code: Tread,
         styx.Twrite.code: Twrite,
         styx.Tclunk.code: Tclunk,
-        styx.Tremove.code: Tremove
+        styx.Tremove.code: Tremove,
+        styx.Twstat.code: Twstat
         }
 
 
@@ -405,6 +422,35 @@ class FileStore:
             return str(e)
         
         return True
+    
+    def wstat(self, fid, st):
+    
+        path = self.paths[fid]
+        real_path = os.path.join(self.dir, path)
+        
+        old_name = path.split("/")[-1]
+        if st.name != "" and st.name != old_name:
+            new_path = os.path.join(os.path.split(real_path)[0], st.name)
+            os.rename(real_path, new_path)
+            real_path = new_path
+        
+        s = os.stat(real_path)
+        
+        if st.mode != 0xffffffff:
+            os.chmod(real_path, st.mode & 0777)
+        
+        if st.mtime != 0xffffffff or st.atime != 0xffffffff:
+            if st.mtime == 0xffffffff:
+                mtime = s.st_mtime
+            else:
+                mtime = st.mtime
+            
+            if st.atime == 0xffffffff:
+                atime = s.st_atime
+            else:
+                atime = st.atime
+            
+            os.utime(real_path, (atime, mtime))
 
 
 if __name__ == "__main__":
