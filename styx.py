@@ -240,6 +240,28 @@ class Rerror(StyxMessage):
         self.ename = ename
 
 
+class Tflush(StyxMessage):
+
+    msg_name = "Tflush"
+    code = 108
+    format = [("oldtag", 4)]
+    
+    def __init__(self, tag = None, fid = None):
+    
+        self.tag = tag
+        self.fid = fid
+
+class Rflush(StyxMessage):
+
+    msg_name = "Rflush"
+    code = 109
+    format = []
+    
+    def __init__(self, tag = None):
+    
+        self.tag = tag
+
+
 class Twalk(StyxMessage):
 
     msg_name = "Twalk"
@@ -512,6 +534,45 @@ class Rstat(StyxMessage):
         stream.sendall(data)
 
 
+class Twstat(StyxMessage):
+
+    msg_name = "Twstat"
+    code = 126
+    # Because the format of this message describes the stat information as
+    # stat[n] it includes a 16-bit length, but the stat object itself
+    # includes its own length field.
+    format = [("fid", 4), ("stat_size", 2), ("stat", "stat")]
+    
+    def __init__(self, tag = None, fid = None, stat = None):
+    
+        self.tag = tag
+        self.fid = fid
+        self.stat = stat
+    
+    def encode(self, stream):
+    
+        # Encode the stat structure.
+        stat_data = self.stat.encode()
+        
+        # Prepend the size of the stat structure itself.
+        stat_data = encode_data(stat_data)
+        
+        data = struct.pack("<BH", self.code, self.tag) + stat_data
+        
+        data = struct.pack("<I", len(data) + 4) + data
+        stream.sendall(data)
+
+class Rwstat(StyxMessage):
+
+    msg_name = "Rwstat"
+    code = 127
+    format = []
+    
+    def __init__(self, tag = None, stat = None):
+    
+        self.tag = tag
+
+
 class Stat:
 
     DMDIR    = 0x80000000
@@ -581,10 +642,9 @@ MessageTypes = {
 #    Rauth.code: Rauth,
     Tattach.code: Tattach,
     Rattach.code: Rattach,
-#    Terror.code: Terror,
     Rerror.code: Rerror,
-#    Tflush.code: Tflush,
-#    Rflush.code: Rflush,
+    Tflush.code: Tflush,
+    Rflush.code: Rflush,
     Twalk.code: Twalk,
     Rwalk.code: Rwalk,
     Topen.code: Topen,
@@ -601,8 +661,8 @@ MessageTypes = {
     Rremove.code: Rremove,
     Tstat.code: Tstat,
     Rstat.code: Rstat,
-#    Twstat.code: Twstat,
-#    Rwstat.code: Rwstat 
+    Twstat.code: Twstat,
+    Rwstat.code: Rwstat 
     }
 
 def decode(sock = None, data = None):
