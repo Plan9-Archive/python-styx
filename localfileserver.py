@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# styxfs.py - Simple file server, serving the contents of a directory.
+# localfileserver.py - Simple file server, serving the contents of a directory.
 #
 # Copyright (C) 2018 David Boddie <david@boddie.org.uk>
 #
@@ -58,11 +58,17 @@ class FileStore:
         path = path.lstrip("/")
         
         real_path = os.path.join(self.dir, path)
-        s = os.stat(real_path)
-        if os.path.isdir(real_path):
-            qtype = 0x80
-        else:
-            qtype = 0
+        
+        try:
+            s = os.stat(real_path)
+            
+            if os.path.isdir(real_path):
+                qtype = 0x80
+            else:
+                qtype = 0
+        
+        except OSError:
+            return None
         
         qversion = 0
         
@@ -91,7 +97,11 @@ class FileStore:
         
         name = os.path.split(path)[1]
         real_path = os.path.join(self.dir, path)
-        s = os.stat(real_path)
+        
+        try:
+            s = os.stat(real_path)
+        except OSError:
+            return None
         
         if os.path.isdir(real_path):
             mode = 0x80000000
@@ -195,7 +205,7 @@ class FileStore:
         real_path = os.path.join(self.dir, path)
         
         if os.path.isdir(real_path):
-            return styx.Rerror(msg.tag, "Not a file.")
+            return -1
         
         f = open(real_path, "r+wb")
         f.seek(offset)
