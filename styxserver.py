@@ -1,4 +1,4 @@
-# styx.py - Classes to decode and encode Styx (9P2000) messages.
+# styxserver.py - Network code for handling Styx (9P2000) messages.
 #
 # Copyright (C) 2018 David Boddie <david@boddie.org.uk>
 #
@@ -74,6 +74,9 @@ class StyxServer:
         store = self.clients[client]
         
         s = store.stat(msg.fid)
+        if s == None:
+            return styx.Rerror(msg.tag, "Not found.")
+        
         return styx.Rstat(msg.tag, s)
     
     def Twalk(self, conn, client, msg):
@@ -87,25 +90,26 @@ class StyxServer:
         # path corresponding to the current fid.
         qids = []
         new_path = path.split("/")
-        try:
-            for element in msg.wname:
-            
-                if element == "..":
-                    # Handle parent directories as path elements.
-                    if new_path: new_path.pop()
-                else:
-                    new_path.append(element)
-                
-                # Update the qid variable, create qids for each intermediate
-                # path, and record the qids created.
-                qid = store.make_qid("/".join(new_path))
-                qids.append(qid)
         
-        except OSError:
-            if len(qids) > 0:
-                return styx.Rwalk(msg.tag, qids)
+        for element in msg.wname:
+        
+            if element == "..":
+                # Handle parent directories as path elements.
+                if new_path: new_path.pop()
             else:
-                return styx.Rerror(msg.tag, "Not found.")
+                new_path.append(element)
+            
+            # Update the qid variable, create qids for each intermediate
+            # path, and record the qids created.
+            qid = store.make_qid("/".join(new_path))
+            
+            if qid == None:
+                if len(qids) > 0:
+                    return styx.Rwalk(msg.tag, qids)
+                else:
+                    return styx.Rerror(msg.tag, "Not found.")
+            
+            qids.append(qid)
         
         # Set the qid and path for the newfid passed by the caller.
         store.set_qid_path(msg.newfid, qid, "/".join(new_path))
@@ -158,6 +162,11 @@ class StyxServer:
         # The fid must have an existing qid.
         count = store.write(msg.fid, msg.offset, msg.data)
         
+        if count == -1:
+            return styx.Rerror(msg.tag, "Not a file.")
+        elif count != len(msg.data):
+            return styx.Rerror(msg.tag, "Failed to write data.")
+        
         return styx.Rwrite(msg.tag, count)
     
     def Tclunk(self, conn, client, msg):
@@ -201,7 +210,7 @@ class StyxServer:
     
         store = self.clients[client]
         
-        s = store.wstat(msg.fid, msg.stat)
+        store.wstat(msg.fid, msg.stat)
         return styx.Rwstat(msg.tag)
     
     handlers = {
