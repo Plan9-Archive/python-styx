@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# -*- encoding: utf8 -*-
 
 # dictserver.py - Serves the contents of a Python dictionary.
 #
@@ -38,8 +39,8 @@ class DictStore:
     
     def get_root_qid(self, fid, afid, uname, aname):
     
-        qid = self.make_qid("")
-        self.set_qid_path(fid, qid, "")
+        qid = self.make_qid(u"/")
+        self.set_qid_path(fid, qid, u"/")
         self.root_fid = fid
         return qid
     
@@ -49,14 +50,14 @@ class DictStore:
     
     def set_qid_path(self, fid, qid, path):
     
-        path = path.lstrip("/")
+        path = path.lstrip(u"/")
         
         self.qids[fid] = qid
         self.paths[fid] = path
     
     def make_qid(self, path):
     
-        path = path.lstrip("/")
+        path = path.lstrip(u"/")
         obj = self.traverse(path)
         
         if obj == None:
@@ -90,7 +91,7 @@ class DictStore:
     
     def _stat(self, qid, path):
     
-        path = path.lstrip("/")
+        path = path.lstrip(u"/")
         
         obj = self.traverse(path)
         
@@ -100,16 +101,16 @@ class DictStore:
         if type(obj) == dict:
             mode = 0x80000000
             size = 0
-            mode |= 0555
+            mode |= 0o555
         else:
             mode = 0
             size = len(obj)
-            mode |= 0444
+            mode |= 0o444
         
-        name = path.split("/")[-1]
+        name = path.split(u"/")[-1]
         
         return styx.Stat(0, 0, qid, mode, self.now, self.now, size, name,
-                         "inferno", "inferno", "")
+                         u"inferno", u"inferno", u"")
     
     def create(self, fid, name, perm):
         return False
@@ -137,7 +138,7 @@ class DictStore:
         if obj == None:
             return None
         
-        data = ""
+        data = b""
         
         if type(obj) == dict:
         
@@ -147,12 +148,12 @@ class DictStore:
             files.sort()
             
             for file_name in files:
-                qid = self.make_qid(path + "/" + file_name)
-                data += self._stat(qid, path + "/" + file_name).encode()
+                qid = self.make_qid(path + u"/" + file_name)
+                data += self._stat(qid, path + u"/" + file_name).encode()
             
             return data[offset:offset + count]
         else:
-            return obj[offset:offset + count]
+            return obj[offset:offset + count].encode("utf8")
     
     def write(self, fid, offset, data):
     
@@ -160,19 +161,19 @@ class DictStore:
         return -2
     
     def remove(self, fid):
-        return False
+        return u"Cannot remove dictionary entries."
     
     def wstat(self, fid, st):
         pass
     
     def traverse(self, path):
     
-        if path == "":
+        if path == u"":
             return self.d
         
         obj = self.d
         
-        for element in path.split("/"):
+        for element in path.split(u"/"):
         
             try:
                 obj = obj[element]
@@ -191,11 +192,12 @@ if __name__ == "__main__":
     port = int(sys.argv[1])
     
     dictionary = {
-        "dir": {
-            "hello.txt": "Hello world!\n"
+        u"dir": {
+            u"hello.txt": u"Hello world!\n",
+            u"\u263a": u"Forståelse"
             }
         }
     
     store = DictStore(dictionary)
     server = styxserver.StyxServer(store)
-    server.serve("", port)
+    server.serve(b"", port)

@@ -38,7 +38,7 @@ class SocketReceiver:
         self.sock = sock
     
     def recv(self, n):
-        data = ""
+        data = b""
         while len(data) < n:
             data += self.sock.recv(n - len(data))
         
@@ -108,7 +108,7 @@ def decode_format(stream, obj):
 
 def encode_format(stream, obj):
 
-    data = ""
+    data = b""
     
     for name, length in obj.format:
     
@@ -624,7 +624,9 @@ class Stat:
     
     def encode(self):
     
-        args = (self.type, self.dev) + self.qid + (self.mode, self.atime, self.mtime, self.length)
+        args = (self.type, self.dev) + self.qid + \
+               (self.mode, int(self.atime), int(self.mtime), self.length)
+        
         data = struct.pack("<HIBIQIIIQ", *args)
         data += encode_string(self.name)
         data += encode_string(self.uid)

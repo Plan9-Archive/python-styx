@@ -50,7 +50,7 @@ class StyxServer:
                     reply = handler(self, conn, client, message)
                 except KeyError:
                     reply = styx.Rerror(message.tag, "Unsupported message.")
-                except StyxServerError, e:
+                except StyxServerError as e:
                     reply = styx.Rerror(message.tag, e.message)
                 except socket.error:
                     # The connection was probably closed by the client.
@@ -67,6 +67,9 @@ class StyxServer:
         store = self.clients[client]
         
         qid = store.get_root_qid(msg.fid, msg.afid, msg.uname, msg.aname)
+        if qid == None:
+            return styx.Rerror(msg.tag, "Root not found.")
+        
         return styx.Rattach(msg.tag, qid)
     
     def Tstat(self, conn, client, msg):

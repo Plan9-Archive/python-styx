@@ -17,7 +17,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-import os, stat, sys
+import locale, os, stat, sys
 import styx, styxserver
 
 class FileStore:
@@ -34,11 +34,12 @@ class FileStore:
         self.paths = {}
         self.opened = {}
         self.root_fid = None
+        self.encoding = sys.getfilesystemencoding()
     
     def get_root_qid(self, fid, afid, uname, aname):
     
-        qid = self.make_qid("")
-        self.set_qid_path(fid, qid, "")
+        qid = self.make_qid(u"/")
+        self.set_qid_path(fid, qid, u"/")
         self.root_fid = fid
         return qid
     
@@ -48,16 +49,16 @@ class FileStore:
     
     def set_qid_path(self, fid, qid, path):
     
-        path = path.lstrip("/")
+        path = path.lstrip(u"/")
         
         self.qids[fid] = qid
         self.paths[fid] = path
     
     def make_qid(self, path):
     
-        path = path.lstrip("/")
+        path = path.lstrip(u"/")
         
-        real_path = os.path.join(self.dir, path)
+        real_path = os.path.join(self.dir, path).encode(self.encoding)
         
         try:
             s = os.stat(real_path)
@@ -93,10 +94,10 @@ class FileStore:
     
     def _stat(self, qid, path):
     
-        path = path.lstrip("/")
+        path = path.lstrip(u"/")
         
         name = os.path.split(path)[1]
-        real_path = os.path.join(self.dir, path)
+        real_path = os.path.join(self.dir, path).encode(self.encoding)
         
         try:
             s = os.stat(real_path)
@@ -110,14 +111,14 @@ class FileStore:
             mode = 0
             size = s.st_size
         
-        mode |= (s.st_mode & 0777)
+        mode |= (s.st_mode & 0o777)
         
         return styx.Stat(0, 0, qid, mode, s.st_atime, s.st_mtime, size,
-                         name, "styxfs", "styxfs", "")
+                         name, u"styxfs", u"styxfs", u"")
     
     def create(self, fid, name, perm):
     
-        if name in (".", ".."):
+        if name in (u".", u".."):
             return False
         
         elif fid in self.opened:
@@ -125,7 +126,7 @@ class FileStore:
         else:
             # Obtain the real path of the directory.
             path = self.paths[fid]
-            real_path = os.path.join(self.dir, path)
+            real_path = os.path.join(self.dir, path).encode(self.encoding)
             
             if not os.path.isdir(real_path):
                 return False
@@ -133,7 +134,7 @@ class FileStore:
             # Read the directory permissions.
             dir_perm = os.stat(real_path).st_mode
             
-            new_real_path = os.path.join(real_path, name)
+            new_real_path = os.path.join(self.dir, path, name).encode(self.encoding)
             
             if os.path.exists(new_real_path):
                 return False
@@ -143,18 +144,18 @@ class FileStore:
                 if perm & styx.Stat.DMDIR:
                     # Only pass the lowest permission bits through to the
                     # underlying filing system.
-                    mode = dir_perm & 0777
+                    mode = dir_perm & 0o777
                     os.mkdir(new_real_path, mode)
                 else:
-                    mode = dir_perm & 0666
+                    mode = dir_perm & 0o666
                     os.mknod(new_real_path, mode, stat.S_IFREG)
             
             except OSError:
                 return False
             
             # Update the fid to refer to the new object.
-            qid = self.make_qid(path + "/" + name)
-            self.set_qid_path(fid, qid, path + "/" + name)
+            qid = self.make_qid(path + u"/" + name)
+            self.set_qid_path(fid, qid, path + u"/" + name)
         
         return qid
     
@@ -177,7 +178,7 @@ class FileStore:
     
         path = self.paths[fid]
         real_path = os.path.join(self.dir, path)
-        data = ""
+        data = b""
         
         if os.path.isdir(real_path):
         
@@ -187,8 +188,8 @@ class FileStore:
             files.sort()
             
             for file_name in files:
-                qid = self.make_qid(path + "/" + file_name)
-                data += self._stat(qid, path + "/" + file_name).encode()
+                qid = self.make_qid(path + u"/" + file_name)
+                data += self._stat(qid, path + u"/" + file_name).encode()
             
             return data[offset:offset + count]
         else:
@@ -207,7 +208,7 @@ class FileStore:
         if os.path.isdir(real_path):
             return -1
         
-        f = open(real_path, "r+wb")
+        f = open(real_path, "r+b")
         f.seek(offset)
         f.write(data)
         f.close()
@@ -225,7 +226,7 @@ class FileStore:
             else:
                 os.remove(real_path)
         
-        except OSError, e:
+        except OSError as e:
             return str(e)
         
         return True
@@ -233,18 +234,25 @@ class FileStore:
     def wstat(self, fid, st):
     
         path = self.paths[fid]
-        real_path = os.path.join(self.dir, path)
+        real_path = os.path.join(self.dir, path).encode(self.encoding)
         
-        old_name = path.split("/")[-1]
-        if st.name != "" and st.name != old_name:
-            new_path = os.path.join(os.path.split(real_path)[0], st.name)
+        pieces = path.split(u"/")
+        old_name = pieces[-1]
+        
+        # Only update the name if the specified name is not empty and differs
+        # from the existing path.
+        if st.name != u"" and st.name != old_name:
+            # Rename the file and use the new path for any further operations.
+            new_path = os.path.join(os.path.split(real_path)[0], st.name).encode(self.encoding)
             os.rename(real_path, new_path)
             real_path = new_path
+            # Update the path dictionary to contain the new path.
+            self.paths[fid] = pieces + [u"/" + st.name]
         
         s = os.stat(real_path)
         
         if st.mode != 0xffffffff:
-            os.chmod(real_path, st.mode & 0777)
+            os.chmod(real_path, st.mode & 0o777)
         
         if st.mtime != 0xffffffff or st.atime != 0xffffffff:
             if st.mtime == 0xffffffff:
@@ -271,4 +279,4 @@ if __name__ == "__main__":
     
     store = FileStore(directory)
     server = styxserver.StyxServer(store)
-    server.serve("", port)
+    server.serve(b"", port)
