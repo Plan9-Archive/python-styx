@@ -16,6 +16,8 @@ The `localfileserver.py` script implements an example data store that serves
 the contents of a local directory. The `dictserver.py` script shows how to
 provide a data store that serves the contents of a Python dictionary.
 
+The `client.py` module provides a class that lets Python programs perform a few
+high level operations on files and directories.
 
 License
 -------
