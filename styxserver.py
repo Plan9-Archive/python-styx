@@ -47,7 +47,7 @@ class StyxServer:
                 
                 try:
                     handler = self.handlers[message.code]
-                    reply = handler(self, conn, client, message)
+                    reply = handler(self, client, message)
                 except KeyError:
                     reply = styx.Rerror(message.tag, "Unsupported message.")
                 except StyxServerError as e:
@@ -58,11 +58,11 @@ class StyxServer:
                 
                 reply.encode(conn)
     
-    def Tversion(self, conn, client, msg):
+    def Tversion(self, client, msg):
     
         return styx.Rversion(msg.tag, msg.msize, msg.version)
     
-    def Tattach(self, conn, client, msg):
+    def Tattach(self, client, msg):
     
         store = self.clients[client]
         
@@ -72,7 +72,7 @@ class StyxServer:
         
         return styx.Rattach(msg.tag, qid)
     
-    def Tstat(self, conn, client, msg):
+    def Tstat(self, client, msg):
     
         store = self.clients[client]
         
@@ -82,7 +82,7 @@ class StyxServer:
         
         return styx.Rstat(msg.tag, s)
     
-    def Twalk(self, conn, client, msg):
+    def Twalk(self, client, msg):
     
         store = self.clients[client]
         
@@ -119,7 +119,7 @@ class StyxServer:
         
         return styx.Rwalk(msg.tag, qids)
     
-    def Topen(self, conn, client, msg):
+    def Topen(self, client, msg):
     
         store = self.clients[client]
         
@@ -131,7 +131,7 @@ class StyxServer:
         
         return styx.Ropen(msg.tag, qid, self.MAX_MSG_SIZE)
     
-    def Tcreate(self, conn, client, msg):
+    def Tcreate(self, client, msg):
     
         store = self.clients[client]
         
@@ -149,7 +149,7 @@ class StyxServer:
         
         return styx.Rcreate(msg.tag, new_qid, self.MAX_MSG_SIZE)
     
-    def Tread(self, conn, client, msg):
+    def Tread(self, client, msg):
     
         store = self.clients[client]
         
@@ -158,7 +158,7 @@ class StyxServer:
         
         return styx.Rread(msg.tag, data)
     
-    def Twrite(self, conn, client, msg):
+    def Twrite(self, client, msg):
     
         store = self.clients[client]
         
@@ -172,7 +172,7 @@ class StyxServer:
         
         return styx.Rwrite(msg.tag, count)
     
-    def Tclunk(self, conn, client, msg):
+    def Tclunk(self, client, msg):
     
         store = self.clients[client]
         
@@ -186,7 +186,7 @@ class StyxServer:
         
         return styx.Rclunk(msg.tag)
     
-    def Tremove(self, conn, client, msg):
+    def Tremove(self, client, msg):
     
         store = self.clients[client]
         
@@ -200,7 +200,7 @@ class StyxServer:
             store.free_qid_path(msg.fid)
             return styx.Rerror(msg.tag, result)
     
-    def Tflush(self, conn, client, msg):
+    def Tflush(self, client, msg):
     
         store = self.clients[client]
         
@@ -209,7 +209,7 @@ class StyxServer:
         
         return styx.Rflush(msg.tag)
     
-    def Twstat(self, conn, client, msg):
+    def Twstat(self, client, msg):
     
         store = self.clients[client]
         
@@ -227,5 +227,6 @@ class StyxServer:
         styx.Twrite.code: Twrite,
         styx.Tclunk.code: Tclunk,
         styx.Tremove.code: Tremove,
-        styx.Twstat.code: Twstat
+        styx.Twstat.code: Twstat,
+        styx.Tflush.code: Tflush
         }
