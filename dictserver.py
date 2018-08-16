@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# -*- encoding: utf8 -*-
+# -*- coding: utf8 -*-
 
 # dictserver.py - Serves the contents of a Python dictionary.
 #
