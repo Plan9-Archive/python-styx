@@ -637,6 +637,26 @@ class Stat:
         return encode_data(data)
 
 
+class File:
+
+    OREAD = 0
+    OWRITE = 1
+    ORDWR = 2
+    OEXEC = 3
+    
+    def __init__(self, fid, mode, client):
+    
+        self.fid = fid
+        self.mode = mode
+        self.client = client
+    
+    def read(self, offset, count):
+        return self.client.read(self.fid, offset, count)
+    
+    def close(self):
+        self.client._clunk(self.fid)
+
+
 MessageTypes = {
     Tversion.code: Tversion, 
     Rversion.code: Rversion,

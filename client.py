@@ -49,8 +49,6 @@ class Client:
         # Maintain an fid for the root of the file server and one for what we
         # consider to be the current directory.
         self.root_fid = 0
-        self.first_fid = 1
-        self.last_fid = 3
         self.current_fid = None
         
         # Keep a collection of replies in case they arrive in an order we don't
@@ -80,6 +78,7 @@ class Client:
         reply = self.send(styx.Tattach(tag=1, fid=0, afid=0, uname=uname, aname=aname))
         
         self.root_fid = self.current_fid = 0
+        self.fids = set([self.root_fid])
     
     def disconnect(self):
     
@@ -114,6 +113,7 @@ class Client:
     def _clunk(self, fid):
     
         self.send(styx.Tclunk(tag=2, fid=fid))
+        self.fids.remove(fid)
     
     def _clunk_old(self, fid):
     
@@ -163,23 +163,18 @@ class Client:
     
     def _next_fid(self, fid):
     
-        # Find the position of the existing fid in the available range.
-        i = fid - self.first_fid
+        next_fid = fid + 1
         
-        # If the current fid is the same as the root fid then allocate the next
-        # fid in the available range.
-        if self.current_fid == self.root_fid:
-            return self.first_fid + ((i + 1) % 3)
+        # If the set of fids is sparse then start at zero in order to find a gap.
+        if next_fid > len(self.fids):
+            next_fid = 0
         
-        # Find the remaining available fid.
-        j = self.current_fid - self.first_fid
+        # Find the first fid that is not in the set.
+        while next_fid in self.fids:
+            next_fid += 1
         
-        i = (i + 1) % 3
-        if i != j:
-            return self.first_fid + i
-        else:
-            i = (i + 1) % 3
-            return self.first_fid + i
+        self.fids.add(next_fid)
+        return next_fid
     
     def ls(self, path = "", details = False):
     
@@ -263,3 +258,17 @@ class Client:
         
         # Release the fid so that it can be reused.
         self._clunk_old(fid)
+    
+    def open(self, path, mode):
+    
+        fid = self._walk(path)
+        
+        reply = self.send(styx.Topen(tag=2, fid=fid, mode=mode))
+        
+        return styx.File(fid, mode, self)
+    
+    def read(self, fid, offset, count):
+    
+        reply = self.send(styx.Tread(tag=2, fid=fid, offset=offset, count=count))
+        
+        return reply.data
